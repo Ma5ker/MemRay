@@ -267,7 +267,7 @@ def get_syscall(pro_name):
     syscall_list = []
     syscall_num = []
     i = 0
-    with open('../syscall.txt','r') as f:
+    with open('./syscall.txt','r') as f:
         for line in f:
             syscall_list.append([line.split()[1],line.split()[0]])
         syscall_dict = dict(syscall_list)
