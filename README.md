@@ -6,7 +6,7 @@ We have pushed one testcase for you to test the functionablity of our tool.
 
 ## About Execution Trace
 
-The analyzed trace is generated with Decaf. We extend DECAF to support multi-tag taint analysis. The extened trace supported by MemRay is as shown in the testcase, each line of which consists of instruction address, instruction, numbers of operands, operand info and taint info.
+The analyzed trace is generated with DECAF. We extend DECAF to support multi-tag taint analysis. The extened trace supported by MemRay is as shown in the testcase, each line of which consists of instruction address, instruction, numbers of operands, operand info and taint info.
 
 MemRay also supports execution traces in the same format that you generate with other tools, such as pintool and so on.
 
