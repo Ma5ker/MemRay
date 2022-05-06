@@ -34,26 +34,40 @@ def getFormat(line_num,line):
     trace = TraceFormat(line_num,ins_addr,ins,num_op,operand_list,max_base,max_reg)
     return trace
 
-def translate(pro_name):
+def translate(pro_name, lib_offset=0):
     call_dict = {}
     pattern =r'([0-9a-z]*) <(.*)>:'
-    with open(pro_name+'-objdump.txt','r') as file:
-        for line in file:
-            tmp = re.findall(pattern,line)
-            if len(tmp) > 0:
-                call_dict[tmp[0][0]] = tmp[0][1]
+    if  lib_offset > 0:
+        with open('lt-'+pro_name+'-objdump.txt','r') as f:
+            for l in f:
+                tmp = re.findall(pattern,l)
+                if len(tmp) > 0:
+                    call_dict[tmp[0][0]] = tmp[0][1]
+        with open(pro_name+'-objdump.txt','r') as file:
+            for line in file:
+                tmp = re.findall(pattern,line)
+                if len(tmp) > 0:
+                    addr = hex(int(tmp[0][0],16) + lib_offset)
+                    call_dict[addr[2:]] = tmp[0][1]
+    else:
+        with open(pro_name+'-objdump.txt','r') as file:
+            for line in file:
+                tmp = re.findall(pattern,line)
+                if len(tmp) > 0:
+                    call_dict[tmp[0][0]] = tmp[0][1]
     return call_dict
 
-def get_heap(pro_name,file_length):
+def get_heap(pro_name,file_length, lib_offset=0):
     loc_addr = []
     free_addr = []
     with open(pro_name+'-objdump.txt','r') as f:
         for l in f:
-            if l.find('<malloc@plt>:')>0:
-                loc_addr = l[:8]
+            if l.find('<malloc@plt>:')>0 or l.find('<calloc@plt>:')>0:
+                loc_addr.append(hex(int(l[:8],16) + lib_offset)[2:])
             if l.find('<free@plt>:')>0:
-                free_addr = l[:8]
+                free_addr.append(hex(int(l[:8],16) + lib_offset)[2:])
     i = 0
+    flag=0
     trace_list = []
     ret_addr = ''
     heap_list = []
@@ -63,18 +77,32 @@ def get_heap(pro_name,file_length):
                 i = i + 1
                 trace=getFormat(i,line)
                 trace_list.append(trace)
-                if trace.ins[-8:] == loc_addr:
+                if trace.ins[-8:] in loc_addr:
                     ret_addr = trace.operand_list[1].content
-                    size = int(trace_list[len(trace_list)-2].operand_list[0].content,16)
-                if trace_list[len(trace_list)-2].ins.startswith('ret') and trace_list[len(trace_list)-2].operand_list[0].content == ret_addr:
-                    heap_list.append([trace.operand_list[0].content,size,trace.line_num,file_length])
-                if trace.ins[-8:] == free_addr:
+                    if trace_list[len(trace_list)-2].ins.find(',(%esp)') > 0:
+                        if trace_list[len(trace_list)-3].ins.find(',0x4(%esp)') > 0:
+                            size = int(trace_list[len(trace_list)-2].operand_list[0].content,16) * int(trace_list[len(trace_list)-3].operand_list[0].content,16)
+                        else:
+                            size = int(trace_list[len(trace_list)-2].operand_list[0].content,16)
+                    elif trace_list[len(trace_list)-3].ins.find(',(%esp)') > 0:
+                        if trace_list[len(trace_list)-4].ins.find(',0x4(%esp)') > 0:
+                            size = int(trace_list[len(trace_list)-3].operand_list[0].content,16) * int(trace_list[len(trace_list)-4].operand_list[0].content,16)
+                        else:
+                            size = int(trace_list[len(trace_list)-3].operand_list[0].content,16)
+                    else:
+                        continue
+                    flag = 1
+                if flag == 1:
+                    if trace_list[len(trace_list)-2].ins.startswith('ret') and trace_list[len(trace_list)-2].operand_list[0].content == ret_addr:
+                        heap_list.append([trace.operand_list[0].content,size,trace.line_num,file_length])
+                        flag = 0
+                if trace.ins[-8:] in free_addr:
                     for heap in heap_list:
                         if heap[0] == trace_list[len(trace_list)-2].operand_list[0].content:
                             if heap[-1] == file_length:
                                 heap[-1] = trace.line_num
                             else:
-                                pass
+                                pass #UAF
                             break
     with open(pro_name+'-heap.txt','w') as file:
         for heap in heap_list:
@@ -94,7 +122,7 @@ def get_stack(pro_name,call_dict):
             if len(line)>1:
                 i = i + 1
                 trace=getFormat(i,line)
-                if trace.ins.startswith('call') and trace.ins_addr.startswith('8') and trace.ins[-8] == '0' and trace.num_op == 2 and (trace.ins[-8:] in call_dict) and call_dict[trace.ins[-8:]] != 'exit@plt':
+                if trace.ins.startswith('call') and trace.ins_addr.startswith('8') and trace.num_op == 2 and (trace.ins[-8:] in call_dict) and call_dict[trace.ins[-8:]] != 'exit@plt':
                     if TmpTree.end is not None:
                         TmpTree = TmpTree.parent
                         depth -= 1
@@ -117,7 +145,7 @@ def get_stack(pro_name,call_dict):
                 if trace.ins.startswith('sub    $') and trace.ins[-4:] == '%esp' and flag == 1:
                     TmpTree.tmp_list.append(int(trace.operand_list[1].content,16))
                     flag = 0
-                if (trace.ins.startswith('lea    ') or trace.ins.startswith('mov    ')) and trace.ins_addr.startswith('8') and trace.ins.find('(%ebp),') > 0:
+                if trace.ins.startswith('lea    ') and trace.ins_addr.startswith('8') and trace.ins.find('(%ebp),') > 0:
                     TmpTree.tmp_list.append(int(trace.operand_list[0].addr,16))
                     TmpTree.tmp_list = list(set(TmpTree.tmp_list))
                     TmpTree.tmp_list.sort()
@@ -148,7 +176,7 @@ def search_stack(TmpTree,target_lineNum):
     call_obj = [call_stack,TmpTree.obj_list]
     return call_obj
 
-def get_taint(pro_name,call_dict,api_list):
+def get_libcall(pro_name,call_dict,api_list):
     flag = 0
     i = 0
     trace_list = []
@@ -185,6 +213,8 @@ def get_taint(pro_name,call_dict,api_list):
                     inst = call_dict[trace_list[len(trace_list)-7].ins[-8:]]
                     lineNum = trace_list[len(trace_list)-7].line_num
                     addr = trace_list[len(trace_list)-7].ins_addr
+                else:
+                    continue
                 api_list.append([lineNum,addr,inst])
                 for op in trace.operand_list:
                     if "T1" in op.taintTag:
@@ -199,10 +229,31 @@ def get_taint(pro_name,call_dict,api_list):
         f.write('\n')
     return
 
-def get_taint_range(trace):
+def get_syscall(pro_name):
+    trace_list = []
+    syscall_list = []
+    syscall_num = []
+    i = 0
+    with open('./syscall.txt','r') as f:
+        for line in f:
+            syscall_list.append([line.split()[1],line.split()[0]])
+        syscall_dict = dict(syscall_list)
+    with open(pro_name+'.txt','r') as file:
+        for line in file:
+            if len(line)>1:
+                i = i + 1
+                trace = getFormat(i,line)
+                trace_list.append(trace)
+            if trace.ins == 'int    $0x80' and trace_list[len(trace_list)-2].ins.find('eax')>0:
+                syscall_num.append([trace.line_num,trace.ins_addr,trace_list[len(trace_list)-2].ins.split('$')[1].split(',')[0]])
+    with open(pro_name+'-syscall-list.txt','w+') as l:
+        for line,ins,num in syscall_num:
+            l.write(str([line,ins,syscall_dict[str(int(num,16))]])+'\n')
+    return i
+
+def get_taint_range(trace,loc):
     taint_tmp = set()
     pattern = r", (\d*)\);"
-    [loc,optype,base] = get_optype(trace)
     tmp = re.findall(pattern,trace.operand_list[loc].taintTag)
     for i in tmp:
         taint_tmp.add(int(i))
@@ -212,23 +263,28 @@ def get_taint_range(trace):
     taint_tmp.append(tag.count('1'))
     return taint_tmp
 
-def group(mem_obj,taint_tmp,num):
-    if len(mem_obj)==0:
-        return
+def group(moas,taint_tmp,num):
+    if len(moas)==0:
+        return False
     if num == 1:
-        if taint_tmp[0] - mem_obj[-1].α[-1][1] == 1:
-            mem_obj[-1].α[-1][1] += taint_tmp[-2] - taint_tmp[0] + 1
-        elif taint_tmp[0] > mem_obj[-1].α[-1][1]:
-            mem_obj[-1].α.append([taint_tmp[0],taint_tmp[-2]])
-        mem_obj[-1].offset[1] += taint_tmp[-1]
+        if taint_tmp[0] - moas[-1].α[-1][1] == 1:
+            moas[-1].α[-1][1] += taint_tmp[-2] - taint_tmp[0] + 1
+            moas[-1].offset[1] += taint_tmp[-1]
+            return True
+        elif taint_tmp[0] > moas[-1].α[-1][1]:
+            moas[-1].α.append([taint_tmp[0],taint_tmp[-2]])
+            moas[-1].offset[1] += taint_tmp[-1]
+            return True
     elif num == 2:
-        if taint_tmp[0] - mem_obj[-2].α[-1][1] == 1:
-            mem_obj[-2].α[-1][1] += taint_tmp[-2] - taint_tmp[0] + 1
-        elif taint_tmp[0] > mem_obj[-2].α[-1][1]:
-            mem_obj[-2].α.append([taint_tmp[0],taint_tmp[-2]])
-        mem_obj[-2].offset[1] += taint_tmp[-1]
-
-    return
+        if taint_tmp[0] - moas[-2].α[-1][1] == 1:
+            moas[-2].α[-1][1] += taint_tmp[-2] - taint_tmp[0] + 1
+            moas[-2].offset[1] += taint_tmp[-1]
+            return True
+        elif taint_tmp[0] > moas[-2].α[-1][1]:
+            moas[-2].α.append([taint_tmp[0],taint_tmp[-2]])
+            moas[-2].offset[1] += taint_tmp[-1]
+            return True
+    return False
 
 def get_optype(trace):
     loc = 0
@@ -261,45 +317,23 @@ def get_optype(trace):
             optype = 'read'
             base = trace.operand_list[0].addr
     return [loc,optype,base]
-
-def get_syscall(pro_name):
-    trace_list = []
-    syscall_list = []
-    syscall_num = []
-    i = 0
-    with open('./syscall.txt','r') as f:
-        for line in f:
-            syscall_list.append([line.split()[1],line.split()[0]])
-        syscall_dict = dict(syscall_list)
-    with open(pro_name+'.txt','r') as file:
-        for line in file:
-            if len(line)>1:
-                i = i + 1
-                trace = getFormat(i,line)
-                trace_list.append(trace)
-            if trace.ins == 'int    $0x80' and trace_list[len(trace_list)-2].ins.find('eax')>0:
-                syscall_num.append([trace.line_num,trace.ins_addr,trace_list[len(trace_list)-2].ins.split('$')[1].split(',')[0]])
-    with open(pro_name+'-syscall-list.txt','w+') as l:
-        for line,ins,num in syscall_num:
-            l.write(str([line,ins,syscall_dict[str(int(num,16))]])+'\n')
-    return i
     
-def get_obj(trace,tr,TmpTree,mem_obj,func_addr,cc_addr,length,base,α,optype,var_type,heap_list = None):
+def get_obj(trace,tr,TmpTree,moas,func_addr,cc_addr,length,loc,optype,base,α,mo_type,heap_list = None):
     offset = -1
-    if var_type == 'static':
-        var = MemObject(tr.operand_list[0].addr,4,var_type,True)
+    if mo_type == 'static':
+        mo = MemObject([tr.operand_list[0].addr],4,mo_type,True)
         offset = int(base,16) - int(tr.operand_list[0].content,16)
-    elif var_type == 'heap':
+    elif mo_type == 'heap':
         for heap in heap_list:
-            if tr.operand_list[0].content == heap[0]:
+            if tr.max_base == int(heap[0],16):
                 if heap[2] <= trace.line_num and heap[3] >= trace.line_num:
                     v = True
                 else:
                     v = False
-                var = MemObject(heap[0],heap[1],var_type,v)
-                offset = int(base,16) - int(tr.operand_list[0].content,16)
-                break    
-    elif var_type == 'stack':
+                mo = MemObject([heap[0]],heap[1],mo_type,v)
+                offset = int(base,16) - tr.max_base
+                break
+    elif mo_type == 'stack':
         call_obj = search_stack(TmpTree,tr.line_num)
         for obj in call_obj[1]:
             if obj[0] == tr.operand_list[0].addr:
@@ -309,33 +343,39 @@ def get_obj(trace,tr,TmpTree,mem_obj,func_addr,cc_addr,length,base,α,optype,var
                     v = True
                 else:
                     v = False
-                var = MemObject([func_addr,obj[0]],obj[1],var_type,v)
+                mo = MemObject([func_addr,obj[0]],obj[1],mo_type,v)
                 offset = int(base,16) - int(tr.operand_list[0].addr,16)
                 break
     if offset >= 0:
         target_obj = search_stack(TmpTree,trace.line_num)
         for cc in target_obj[0]:
             cc_addr.append(cc[0])
-        if len(mem_obj) > 0 and cc_addr == mem_obj[-1].cc and optype == mem_obj[-1].optype and var == mem_obj[-1].var:
-            taint_tmp = get_taint_range(trace)
-            group(mem_obj,taint_tmp,1)
-        elif len(mem_obj) > 1 and cc_addr == mem_obj[-2].cc and optype == mem_obj[-2].optype and var == mem_obj[-2].var and mem_obj[-1].optype != mem_obj[-2].optype:
-            taint_tmp = get_taint_range(trace)
-            group(mem_obj,taint_tmp,2)
+        if len(moas) > 0 and cc_addr == moas[-1].cc and optype == moas[-1].optype and mo == moas[-1].mo:
+            taint_tmp = get_taint_range(trace,loc)
+            if moas[-1].α[-1][1] + 1 == taint_tmp[0]:
+                if(group(moas,taint_tmp,1)):
+                    return trace.operand_list[loc].addr
+        elif len(moas) > 1 and cc_addr == moas[-2].cc and optype == moas[-2].optype and mo == moas[-2].mo and moas[-1].optype != moas[-2].optype:
+            taint_tmp = get_taint_range(trace,loc)
+            if moas[-1].α[-1][1] + 1 == taint_tmp[0]:
+                if(group(moas,taint_tmp,2)):
+                    return trace.operand_list[loc].addr
         else:
-            mem_obj.append(MemObjectAccess(var,cc_addr,[trace.line_num,trace.ins],optype,[α],[offset,offset+length]))
+            moas.append(MemObjectAccess(mo,cc_addr,[trace.ins_addr,trace.ins,trace.line_num],optype,[α],[offset,offset+length]))
+            return trace.operand_list[loc].addr
     return
 
-def searchObj(target_trace,trace_list,heap_list,TmpTree,optype,base,mem_obj,ins_list):
-    MAX = 10000
+def searchObj(target_trace,trace_list,heap_list,heap_addr,TmpTree,loc,optype,base,moas,MAX):
     func_addr = []
     cc_addr = []
     trace = target_trace
     memregs = [trace.max_reg,trace.max_base]
-    taint_tmp = get_taint_range(trace)
+    taint_tmp = get_taint_range(trace,loc)
     α=[taint_tmp[0],taint_tmp[-2]]
     length = taint_tmp[-1] - 1
-    
+    if trace.ins.startswith('mov') and (memregs[1] in heap_addr):
+        base_last=get_obj(trace,trace,TmpTree,moas,func_addr,cc_addr,length,loc,optype,base,α,'heap',heap_list)
+        return base_last
     if (trace.ins.startswith('mov') or trace.ins.startswith('cmp')) and (memregs[0] == 'ebp' or memregs[0] == 'esp'):
         pattern = r"(\(.*\))"
         string = re.findall(pattern,trace.ins)
@@ -343,16 +383,16 @@ def searchObj(target_trace,trace_list,heap_list,TmpTree,optype,base,mem_obj,ins_
             ins = trace.ins.replace(tmp,tmp.replace(',',''))
         if ins.split(',')[1].find('ebp') > 0 or ins.split(',')[1].find('esp') > 0:
             trace.operand_list[0].addr = trace.operand_list[1].addr
-        get_obj(trace,trace,TmpTree,mem_obj,func_addr,cc_addr,length,base,α,optype,'stack')
-        ins_list.append([trace.ins_addr,trace.ins])
-        return
+        base_last=get_obj(trace,trace,TmpTree,moas,func_addr,cc_addr,length,loc,optype,base,α,'stack')
+        return base_last
     for tr in reversed(trace_list):
         if trace.line_num - tr.line_num > MAX:
             return
         if tr.line_num in range(0,trace.line_num):
             if tr.ins.startswith('movs') and trace.ins.startswith('rep movs'):
-                group(mem_obj,taint_tmp,1)
-                return
+                if len(moas) > 0 and moas[-1].op[1].startswith('movs'):
+                    if(group(moas,taint_tmp,1)):
+                        return trace.operand_list[loc].addr
             if tr.num_op<2 or tr.num_op>3:
                 continue
             if tr.num_op==3:
@@ -363,24 +403,20 @@ def searchObj(target_trace,trace_list,heap_list,TmpTree,optype,base,mem_obj,ins_
                     if tr.ins.startswith('lea    '):
                         memregs = [ tr.max_reg, tr.max_base ]
                         if memregs[0]=='ebp':
-                            get_obj(trace,tr,TmpTree,mem_obj,func_addr,cc_addr,length,base,α,optype,'stack')
-                            ins_list.append([trace.ins_addr,trace.ins])
-                            return
+                            base_last=get_obj(trace,tr,TmpTree,moas,func_addr,cc_addr,length,loc,optype,base,α,'stack')
+                            return base_last
                     elif tr.ins.startswith('mov') and tr.ins_addr.startswith('8') and memregs[0]=='ebp':
                         tr.operand_list[0].addr = tr.operand_list[0].content
-                        get_obj(trace,tr,TmpTree,mem_obj,func_addr,cc_addr,length,base,α,optype,'stack')
-                        ins_list.append([trace.ins_addr,trace.ins])
-                        return
+                        base_last=get_obj(trace,tr,TmpTree,moas,func_addr,cc_addr,length,loc,optype,base,α,'stack')
+                        return base_last
                     elif tr.ins.startswith('mov    $') and tr.operand_list[0].type == 'I':
-                        get_obj(trace,tr,TmpTree,mem_obj,func_addr,cc_addr,length,base,α,optype,'static')
-                        ins_list.append([trace.ins_addr,trace.ins])
-                        return
+                        base_last=get_obj(trace,tr,TmpTree,moas,func_addr,cc_addr,length,loc,optype,base,α,'static')
+                        return base_last
                     elif tr.ins.startswith('mov    %eax') and tr.ins_addr.startswith('8'):
                         for heap in heap_list:
                             if tr.line_num == heap[2]:
-                                get_obj(trace,tr,TmpTree,mem_obj,func_addr,cc_addr,length,base,α,optype,'heap',heap_list)
-                                ins_list.append([trace.ins_addr,trace.ins])
-                                return                
+                                base_last=get_obj(trace,tr,TmpTree,moas,func_addr,cc_addr,length,loc,optype,base,α,'heap',heap_list)
+                                return base_last              
                     else:
                         if tr.ins.startswith('inc') or tr.ins.startswith('dec'):
                             memregs = [ tr.operand_list[0].addr , int(tr.operand_list[0].content,16) ]
@@ -391,40 +427,56 @@ def searchObj(target_trace,trace_list,heap_list,TmpTree,optype,base,mem_obj,ins_
 def main():
     time_start = time.time()
     i = 0
+    lib_offset=0
+    MAX = 10000
     base_last = ''
     trace_list = []
-    mem_obj = []
-    ins_list = []
     api_list = []
-    call_dict = translate(pro_name)
-    get_taint(pro_name,call_dict,api_list)
+    heap_addr = []
+    moas = []
+    call_dict = translate(pro_name,lib_offset)
+    get_libcall(pro_name,call_dict,api_list)
     file_length = get_syscall(pro_name)
     StackTree = get_stack(pro_name,call_dict)
     StackTree.print_node(StackTree,pro_name)
-    heap_list = get_heap(pro_name,file_length)
+    heap_list = get_heap(pro_name,file_length,lib_offset)
+    for heap in heap_list:
+        heap_addr.append(int(heap[0],16))
     with open(pro_name+'.txt','r') as file:
         for line in file:
             if len(line) > 1:
                 i = i + 1
                 trace=getFormat(i,line)
                 if line.find('T1') > 0:
+                    if trace.ins.startswith('mov'):
+                        trace.operand_list[1].taintTag=trace.operand_list[0].taintTag
+                    if trace.ins.startswith('rep movs'):
+                        trace.operand_list[3].taintTag=trace.operand_list[1].taintTag
                     [loc,optype,base] = get_optype(trace)
                     if base != '' and ('T1' in trace.operand_list[loc].taintTag) and base != base_last:
-                        if len(ins_list) > 0 and [trace.ins_addr,trace.ins] == ins_list[-1]:
-                            taint_tmp = get_taint_range(trace)
-                            group(mem_obj,taint_tmp,1)
-                        elif len(ins_list) > 1 and [trace.ins_addr,trace.ins] == ins_list[-2] and len(mem_obj)>1 and trace.ins == mem_obj[-2].op[1]:
-                            taint_tmp = get_taint_range(trace)
-                            group(mem_obj,taint_tmp,2)
+                        if len(moas) > 0 and [trace.ins_addr,trace.ins] == [moas[-1].op[0],moas[-1].op[1]] and int(trace.operand_list[loc].addr,16) > (int(moas[-1].mo.alloc[-1],16) + moas[-1].offset[-1]):
+                            taint_tmp = get_taint_range(trace,loc)
+                            if(group(moas,taint_tmp,1)):
+                                base_last = base
+                        elif len(moas) > 1 and [trace.ins_addr,trace.ins] == [moas[-2].op[0],moas[-2].op[1]] and int(trace.operand_list[loc].addr,16) > (int(moas[-2].mo.alloc[-1],16) + moas[-2].offset[-1]):
+                            taint_tmp = get_taint_range(trace,loc)
+                            if(group(moas,taint_tmp,2)):
+                                base_last = base
                         else:
-                            searchObj(trace,trace_list,heap_list,StackTree,optype,base,mem_obj,ins_list)
-                        base_last = base
+                            base_last_tmp = searchObj(trace,trace_list,heap_list,heap_addr,StackTree,loc,optype,base,moas,MAX)
+                            if base_last_tmp is not None:
+                                base_last = base_last_tmp
                 trace_list.append(trace)
-    with open(pro_name+'-result.txt','w') as f:
-        for memobject in mem_obj:
-            if memobject.var.size != 5 and memobject.var.size < memobject.offset[1]:
-                print('Stack Overflow in ',str(memobject.cc))
-            f.write(str([memobject.var.alloc,memobject.var.size,memobject.var.type,memobject.var.v])+'\t'+str(memobject.cc)+'\t'+str(memobject.op)+'\t'+str(memobject.optype)+'\t'+str(memobject.α)+'\t'+str(memobject.offset)+'\n')
+    with open(pro_name+'-moas.txt','w') as f:
+        for moa in moas:
+            line_num=moa.op.pop(-1)
+            if moa.mo.size < moa.offset[1]:
+                print('Buffer Overflow in ',str(line_num),str(moa.op))
+                f.write('*')
+            if moa.mo.v == False:
+                print('Use After Free in ',str(line_num),str(moa.op))
+                f.write('*')
+            f.write(str(line_num)+'\t'+str([moa.mo.alloc,moa.mo.size,moa.mo.type,moa.mo.v])+'\t'+str(moa.cc)+'\t'+str(moa.op)+'\t'+str(moa.optype)+'\t'+str(moa.α)+'\t'+str(moa.offset)+'\n')
     time_end = time.time()
     print("End...\t\tTime cost: ",time_end-time_start,'s') 
 

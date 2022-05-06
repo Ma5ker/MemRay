@@ -1,0 +1,7 @@
+329449	[[['__libc_start_main@plt', 'serveconnection'], '0xbfffd5d7'], 8216, 'stack', True]	['__libc_start_main@plt', 'serveconnection', 'strstr@plt']	['b7ef8c37', 'movzbl (%edx),%eax']	read	[[0, 369]]	[0, 369]
+332070	[[['__libc_start_main@plt', 'serveconnection'], '0xbfffd5d7'], 8216, 'stack', True]	['__libc_start_main@plt', 'serveconnection']	['8049a7e', 'movzbl (%edx,%edi,1),%eax']	read	[[0, 365]]	[0, 365]
+332075	[[['__libc_start_main@plt', 'serveconnection'], '0xbfffb5d7'], 8192, 'stack', True]	['__libc_start_main@plt', 'serveconnection']	['8049a6c', 'mov    %eax,-0x4151(%edx,%ebp,1)']	write	[[0, 364]]	[0, 364]
+335458	[[['__libc_start_main@plt', 'serveconnection'], '0xbfffb5d7'], 8192, 'stack', True]	['__libc_start_main@plt', 'serveconnection', 'strtok@plt']	['b7ef8e07', 'mov    (%eax),%cl']	read	[[0, 351]]	[0, 351]
+336763	[[['__libc_start_main@plt', 'serveconnection'], '0xbfffd5d7'], 8216, 'stack', True]	['__libc_start_main@plt', 'serveconnection', 'strstr@plt']	['b7ef8c37', 'movzbl (%edx),%eax']	read	[[0, 345]]	[0, 345]
+*347834	[[['__libc_start_main@plt', 'serveconnection', 'Log'], '0xbfffb426'], 200, 'stack', True]	['__libc_start_main@plt', 'serveconnection', 'Log', 'vsprintf@plt']	['b7ef952a', 'movsw  %ds:(%esi),%es:(%edi)']	write	[[4, 349]]	[46, 391]
+365475	[[['__libc_start_main@plt', 'serveconnection', 'Log'], '0xbfffb35e'], 200, 'stack', True]	['__libc_start_main@plt', 'serveconnection', 'Log', 'sprintf@plt']	['b7ef9525', 'movsb  %ds:(%esi),%es:(%edi)']	write	[[286, 311], [316, 349]]	[0, 59]

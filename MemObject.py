@@ -9,8 +9,8 @@ class MemObject(object):
         return self.alloc == other.alloc and self.size == other.size and self.type == other.type and self.v == other.v
 
 class MemObjectAccess(object):
-    def __init__(self,var,cc,op,optype,α,offset):
-        self.var = var
+    def __init__(self,mo,cc,op,optype,α,offset):
+        self.mo = mo
         self.cc = cc
         self.op = op
         self.optype = optype
