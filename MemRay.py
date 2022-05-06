@@ -318,7 +318,7 @@ def get_optype(trace):
             base = trace.operand_list[0].addr
     return [loc,optype,base]
     
-def get_obj(trace,tr,TmpTree,moas,func_addr,cc_addr,length,loc,optype,base,α,mo_type,heap_list = None):
+def get_obj(trace,tr,TmpTree,moas,func_addr,cc_addr,length,loc,optype,base,base_last,α,mo_type,heap_list = None):
     offset = -1
     if mo_type == 'static':
         mo = MemObject([tr.operand_list[0].addr],4,mo_type,True)
@@ -352,20 +352,21 @@ def get_obj(trace,tr,TmpTree,moas,func_addr,cc_addr,length,loc,optype,base,α,mo
             cc_addr.append(cc[0])
         if len(moas) > 0 and cc_addr == moas[-1].cc and optype == moas[-1].optype and mo == moas[-1].mo:
             taint_tmp = get_taint_range(trace,loc)
-            if moas[-1].α[-1][1] + 1 == taint_tmp[0]:
+            if moas[-1].α[-1][1] + 1 == taint_tmp[0] and (int(base,16) - int(base_last[-1],16)) in list(range(1,5)):
                 if(group(moas,taint_tmp,1)):
-                    return trace.operand_list[loc].addr
+                    base_last[-1] = trace.operand_list[loc].addr
         elif len(moas) > 1 and cc_addr == moas[-2].cc and optype == moas[-2].optype and mo == moas[-2].mo and moas[-1].optype != moas[-2].optype:
             taint_tmp = get_taint_range(trace,loc)
-            if moas[-1].α[-1][1] + 1 == taint_tmp[0]:
+            if moas[-2].α[-1][1] + 1 == taint_tmp[0] and (int(base,16) - int(base_last[-2],16)) in list(range(1,5)):
                 if(group(moas,taint_tmp,2)):
-                    return trace.operand_list[loc].addr
+                    base_last[-2] =  trace.operand_list[loc].addr
         else:
             moas.append(MemObjectAccess(mo,cc_addr,[trace.ins_addr,trace.ins,trace.line_num],optype,[α],[offset,offset+length]))
-            return trace.operand_list[loc].addr
+            base_last.pop(0)
+            base_last.append(trace.operand_list[loc].addr)
     return
 
-def searchObj(target_trace,trace_list,heap_list,heap_addr,TmpTree,loc,optype,base,moas,MAX):
+def searchObj(target_trace,trace_list,heap_list,heap_addr,TmpTree,loc,optype,base,base_last,moas,MAX):
     func_addr = []
     cc_addr = []
     trace = target_trace
@@ -374,8 +375,8 @@ def searchObj(target_trace,trace_list,heap_list,heap_addr,TmpTree,loc,optype,bas
     α=[taint_tmp[0],taint_tmp[-2]]
     length = taint_tmp[-1] - 1
     if trace.ins.startswith('mov') and (memregs[1] in heap_addr):
-        base_last=get_obj(trace,trace,TmpTree,moas,func_addr,cc_addr,length,loc,optype,base,α,'heap',heap_list)
-        return base_last
+        get_obj(trace,trace,TmpTree,moas,func_addr,cc_addr,length,loc,optype,base,base_last,α,'heap',heap_list)
+        return
     if (trace.ins.startswith('mov') or trace.ins.startswith('cmp')) and (memregs[0] == 'ebp' or memregs[0] == 'esp'):
         pattern = r"(\(.*\))"
         string = re.findall(pattern,trace.ins)
@@ -383,16 +384,16 @@ def searchObj(target_trace,trace_list,heap_list,heap_addr,TmpTree,loc,optype,bas
             ins = trace.ins.replace(tmp,tmp.replace(',',''))
         if ins.split(',')[1].find('ebp') > 0 or ins.split(',')[1].find('esp') > 0:
             trace.operand_list[0].addr = trace.operand_list[1].addr
-        base_last=get_obj(trace,trace,TmpTree,moas,func_addr,cc_addr,length,loc,optype,base,α,'stack')
-        return base_last
+        get_obj(trace,trace,TmpTree,moas,func_addr,cc_addr,length,loc,optype,base,base_last,α,'stack')
+        return
     for tr in reversed(trace_list):
         if trace.line_num - tr.line_num > MAX:
             return
         if tr.line_num in range(0,trace.line_num):
             if tr.ins.startswith('movs') and trace.ins.startswith('rep movs'):
-                if len(moas) > 0 and moas[-1].op[1].startswith('movs'):
+                if len(moas) > 0 and moas[-1].op[1].startswith('movs') and (int(base,16) - int(base_last[-1],16)) in list(range(1,5)):
                     if(group(moas,taint_tmp,1)):
-                        return trace.operand_list[loc].addr
+                        base_last[-1] = trace.operand_list[loc].addr
             if tr.num_op<2 or tr.num_op>3:
                 continue
             if tr.num_op==3:
@@ -403,20 +404,20 @@ def searchObj(target_trace,trace_list,heap_list,heap_addr,TmpTree,loc,optype,bas
                     if tr.ins.startswith('lea    '):
                         memregs = [ tr.max_reg, tr.max_base ]
                         if memregs[0]=='ebp':
-                            base_last=get_obj(trace,tr,TmpTree,moas,func_addr,cc_addr,length,loc,optype,base,α,'stack')
-                            return base_last
+                            get_obj(trace,tr,TmpTree,moas,func_addr,cc_addr,length,loc,optype,base,base_last,α,'stack')
+                            return
                     elif tr.ins.startswith('mov') and tr.ins_addr.startswith('8') and memregs[0]=='ebp':
                         tr.operand_list[0].addr = tr.operand_list[0].content
-                        base_last=get_obj(trace,tr,TmpTree,moas,func_addr,cc_addr,length,loc,optype,base,α,'stack')
-                        return base_last
+                        get_obj(trace,tr,TmpTree,moas,func_addr,cc_addr,length,loc,optype,base,base_last,α,'stack')
+                        return
                     elif tr.ins.startswith('mov    $') and tr.operand_list[0].type == 'I':
-                        base_last=get_obj(trace,tr,TmpTree,moas,func_addr,cc_addr,length,loc,optype,base,α,'static')
-                        return base_last
+                        get_obj(trace,tr,TmpTree,moas,func_addr,cc_addr,length,loc,optype,base,base_last,α,'static')
+                        return
                     elif tr.ins.startswith('mov    %eax') and tr.ins_addr.startswith('8'):
                         for heap in heap_list:
                             if tr.line_num == heap[2]:
-                                base_last=get_obj(trace,tr,TmpTree,moas,func_addr,cc_addr,length,loc,optype,base,α,'heap',heap_list)
-                                return base_last              
+                                get_obj(trace,tr,TmpTree,moas,func_addr,cc_addr,length,loc,optype,base,base_last,α,'heap',heap_list)
+                                return           
                     else:
                         if tr.ins.startswith('inc') or tr.ins.startswith('dec'):
                             memregs = [ tr.operand_list[0].addr , int(tr.operand_list[0].content,16) ]
@@ -426,10 +427,10 @@ def searchObj(target_trace,trace_list,heap_list,heap_addr,TmpTree,loc,optype,bas
 
 def main():
     time_start = time.time()
-    i = 0
     lib_offset=0
     MAX = 10000
-    base_last = ''
+    i = 0
+    base_last = ['','']
     trace_list = []
     api_list = []
     heap_addr = []
@@ -453,19 +454,17 @@ def main():
                     if trace.ins.startswith('rep movs'):
                         trace.operand_list[3].taintTag=trace.operand_list[1].taintTag
                     [loc,optype,base] = get_optype(trace)
-                    if base != '' and ('T1' in trace.operand_list[loc].taintTag) and base != base_last:
-                        if len(moas) > 0 and [trace.ins_addr,trace.ins] == [moas[-1].op[0],moas[-1].op[1]] and int(trace.operand_list[loc].addr,16) > (int(moas[-1].mo.alloc[-1],16) + moas[-1].offset[-1]):
+                    if base != '' and ('T1' in trace.operand_list[loc].taintTag) and base not in base_last:
+                        if len(moas) > 0 and [trace.ins_addr,trace.ins] == [moas[-1].op[0],moas[-1].op[1]] and (int(base,16) - int(base_last[-1],16)) in list(range(1,5)):
                             taint_tmp = get_taint_range(trace,loc)
                             if(group(moas,taint_tmp,1)):
-                                base_last = base
-                        elif len(moas) > 1 and [trace.ins_addr,trace.ins] == [moas[-2].op[0],moas[-2].op[1]] and int(trace.operand_list[loc].addr,16) > (int(moas[-2].mo.alloc[-1],16) + moas[-2].offset[-1]):
+                                base_last[-1] = base
+                        elif len(moas) > 1 and [trace.ins_addr,trace.ins] == [moas[-2].op[0],moas[-2].op[1]] and (int(base,16) - int(base_last[-2],16)) in list(range(1,5)):
                             taint_tmp = get_taint_range(trace,loc)
                             if(group(moas,taint_tmp,2)):
-                                base_last = base
+                                base_last[-2] = base
                         else:
-                            base_last_tmp = searchObj(trace,trace_list,heap_list,heap_addr,StackTree,loc,optype,base,moas,MAX)
-                            if base_last_tmp is not None:
-                                base_last = base_last_tmp
+                            searchObj(trace,trace_list,heap_list,heap_addr,StackTree,loc,optype,base,base_last,moas,MAX)
                 trace_list.append(trace)
     with open(pro_name+'-moas.txt','w') as f:
         for moa in moas:
