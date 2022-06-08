@@ -466,7 +466,7 @@ def main():
                         else:
                             searchObj(trace,trace_list,heap_list,heap_addr,StackTree,loc,optype,base,base_last,moas,MAX)
                 trace_list.append(trace)
-    with open(pro_name+'-moas.txt','w') as f:
+    with open(pro_name+'-result.txt','w') as f:
         for moa in moas:
             line_num=moa.op.pop(-1)
             if moa.mo.size < moa.offset[1]:

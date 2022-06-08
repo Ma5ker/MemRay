@@ -26,7 +26,7 @@ Buffer Overflow in  347834 ['b7ef952a', 'movsw  %ds:(%esi),%es:(%edi)']
 End...		Time cost:  32.668272733688354 s
 
 
-# We put details in the BinName-moas.txt
+# We put details in the BinName-result.txt
 ➜  MemRay git:(main) ✗ cat .\ghttpd-result.txt
 [[['__libc_start_main@plt', 'serveconnection'], '0xbfffd5d7'], 8216, 'stack', True]     ['__libc_start_main@plt', 'serveconnection', 'strstr@plt']      [329449, 'movzbl (%edx),%eax']  read    [[0, 369]]      [0, 369]
 [[['__libc_start_main@plt', 'serveconnection'], '0xbfffd5d7'], 8216, 'stack', True]     ['__libc_start_main@plt', 'serveconnection']    [332070, 'movzbl (%edx,%edi,1),%eax']   read    [[0, 365]]      [0, 365]
